@@ -15,6 +15,7 @@
 #include "elf/elf.hpp"
 #include "fd.hpp"
 #include "hijacker/hijacker.hpp"
+#include "msg.hpp"
 #include "servers.hpp"
 #include "util.hpp"
 
@@ -188,6 +189,7 @@ static bool handleIpc(const int syscore, const int fd) noexcept {
 	static constexpr int PING =  0;
 	static constexpr int PONG =  1;
 	static constexpr int PROCESS_LAUNCHED = 1;
+	static constexpr uint32_t BREW_PREFIX = 0x57455242;
 
 	bool result = true;
 
@@ -195,6 +197,7 @@ static bool handleIpc(const int syscore, const int fd) noexcept {
 		int cmd;
 		int pid;
 		uintptr_t func;
+		unsigned int prefix;
 	} res{};
 
 	if (recv(fd, &res, sizeof(res), MSG_NOSIGNAL) == -1) {
@@ -221,8 +224,20 @@ static bool handleIpc(const int syscore, const int fd) noexcept {
 
 	result = false;
 
-	LoopBuilder loop = SLEEP_LOOP;
 	const int pid = res.pid;
+	const auto prefix = res.prefix;
+	const bool isHomebrew = res.func != 0;
+	if (notifyHandlers(prefix, pid, isHomebrew)) {
+		// elf loading has been handled by another loader
+		return result;
+	}
+
+	if (!isHomebrew && prefix != BREW_PREFIX) {
+		// handlers notified, not homebrew, nothing else to do
+		return result;
+	}
+
+	LoopBuilder loop = SLEEP_LOOP;
 
 	UniquePtr<Hijacker> spawned = nullptr;
 	{
@@ -331,6 +346,8 @@ static void *hookThread(void *args) noexcept {
 	return 0;
 }
 
+// TODO: maybe use sceLncUtilDeclareReadyForSuspend to handle rest mode
+
 int main() {
 	puts("daemon entered");
 	AbortServer abortServer{};
@@ -339,6 +356,7 @@ int main() {
 	pthread_t elfHandler = nullptr;
 	UniquePtr<UnixSocket> serverSock{new UnixSocket{"/system_tmp/IPC"}};
 	pthread_create(&elfHandler, nullptr, hookThread, serverSock.get());
+	auto msgThread = startMessageReceiver();
 
 	abortServer.TcpServer::run();
 	klogServer.TcpServer::run();

@@ -15,6 +15,7 @@
 #define PONG 1
 #define PROCESS_LAUNCHED 1
 #define MSG_NOSIGNAL    0x20000         /* do not generate SIGPIPE on EOF */
+#define TITLEID_OFFSET 0xd
 
 // NOLINTBEGIN(*)
 
@@ -36,6 +37,7 @@ struct sockaddr_un {
 
 typedef struct {
 	int sock;
+	int daemonPid;
 	const func_t inf_loop; // haha open prospero go brrrrrrr
 	func_t func;
 	int (*socket)(int domain, int type, int protocol);
@@ -50,6 +52,7 @@ struct result {
 	int cmd;
 	int pid;
 	func_t func;
+	unsigned int prefix;
 };
 
 // INFINITE_LOOP: 0xeb 0xfe
@@ -144,9 +147,26 @@ static inline int __attribute__((always_inline)) isHomebrew(ExtraStuff *restrict
 	return stuff->access(path, F_OK) == 0;
 }
 
+static inline unsigned int __attribute__((always_inline)) getTitleId(procSpawnArgs *restrict arg) {
+	return *(unsigned int *)(arg->sandboxPath + TITLEID_OFFSET);
+}
+
 static int __attribute__((used)) rfork_thread_hook(int flags, void *stack, func_t func, procSpawnArgs *restrict arg, rfork_thread_t orig, ExtraStuff *restrict stuff) {
 	if (!isHomebrew(stuff, arg)) {
-		return orig(flags, stack, func, arg);
+		const int pid = orig(flags, stack, func, arg);
+		if (stuff->sock == -1) {
+			// too bad
+			return pid;
+		}
+
+		struct result res = {
+			.cmd = PROCESS_LAUNCHED,
+			.pid = pid,
+			.func = 0,
+			.prefix = getTitleId(arg)
+		};
+		stuff->send(stuff->sock, (void *)&res, sizeof(res),  MSG_NOSIGNAL);
+		return pid;
 	}
 
 	volatile unsigned long ipc[2];
@@ -182,7 +202,8 @@ static int __attribute__((used)) rfork_thread_hook(int flags, void *stack, func_
 	struct result res = {
 		.cmd = PROCESS_LAUNCHED,
 		.pid = pid,
-		.func = func
+		.func = func,
+		.prefix = getTitleId(arg)
 	};
 
 	// we must always write a response so the daemon doesn't get stuck

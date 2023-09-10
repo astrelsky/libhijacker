@@ -6,6 +6,9 @@ extern "C" {
 	#include <stdint.h>
 	#include <stdlib.h>
 	#include <stdio.h>
+	void *malloc(size_t length);
+	void free(void *ptr);
+	void *realloc(void *ptr, size_t size);
 }
 
 // for things we need but can't have... yet...
@@ -250,6 +253,9 @@ class String {
 
 	void grow(size_t target) {
 		const size_t newCapacity = align(target);
+		if (capacity >= newCapacity) {
+			return;
+		}
 		if (is_sso()) {
 			char *tmp = new char[newCapacity];
 			__builtin_memcpy(tmp, data.buf, size);
@@ -578,6 +584,265 @@ class List {
 				it++;
 			}
 			return *it;
+		}
+};
+
+template <typename T>
+class Vector {
+
+	static constexpr size_t DEFAULT_CAPACITY = 16;
+
+	T *first;
+	T *last;
+	T *eos;
+
+	size_t available() const noexcept {
+		return eos - last;
+	}
+
+	void grow(size_t cap) noexcept {
+		if (cap <= capacity()) {
+			return;
+		}
+		first = reallocate(first, cap);
+		eos = first + cap;
+	}
+
+	constexpr void setSize(const size_t count, const size_t length, const T &value) noexcept {
+		if (length > count) {
+			if constexpr(!__is_trivially_destructible(T)) {
+				for (size_t i = count; i < length; i++) {
+					first[i].~T();
+				}
+			}
+		} else {
+			grow(count);
+			for (size_t i = length; i < count; i++) {
+				first[i] = value;
+			}
+		}
+		last = first + count;
+	}
+
+	static T *allocate(size_t n) noexcept {
+		return reinterpret_cast<T *>(malloc(n * sizeof(T))); // NOLINT
+	}
+
+	static T *reallocate(T *ptr, size_t n) noexcept {
+		// if it fails we're screwed anyway
+		// no exceptions so we'll just run until fault
+		return reinterpret_cast<T *>(realloc(ptr, n * sizeof(T))); // NOLINT
+	}
+
+	public:
+		Vector() noexcept : first(allocate(DEFAULT_CAPACITY)), last(first), eos(first + DEFAULT_CAPACITY) {} // NOLINT
+
+		Vector(const Vector<T> &rhs) noexcept : first(allocate(rhs.capacity())), last(first), eos(first + rhs.capacity()) { // NOLINT
+			if constexpr(__is_trivially_copyable(T)) {
+				__builtin_memcpy(first, rhs.first, rhs.size() * sizeof(T));
+			} else {
+				const size_t length = rhs.size();
+				for (size_t i = 0; i < length; i++) {
+					first[i] = rhs[i];
+				}
+			}
+		}
+
+		Vector &operator=(const Vector<T> &rhs) noexcept {
+			if (this == &rhs) [[unlikely]] {
+				return *this;
+			}
+
+			const size_t length = rhs.size();
+
+			if (capacity() < length) {
+				clear();
+			}
+
+			first = grow(rhs.capacity()); // NOLINT
+			last = first + length;
+
+			if constexpr(__is_trivially_copyable(T)) {
+				__builtin_memcpy(first, rhs.first, length * sizeof(T));
+			} else {
+				for (size_t i = 0; i < length; i++) {
+					first[i] = rhs[i];
+				}
+			}
+
+			return *this;
+		}
+
+		Vector(Vector<T> &&rhs) noexcept : first(rhs.first), last(rhs.last), eos(rhs.eos) {
+			rhs.first = nullptr;
+		}
+
+		Vector &operator=(Vector<T> &&rhs) noexcept {
+			free(first);
+			first = rhs.first;
+			last = rhs.last;
+			eos = rhs.eos;
+			rhs.first = nullptr;
+			return *this;
+		}
+
+		~Vector() noexcept {
+			free(first);
+		}
+
+		constexpr T &at(size_t i) noexcept {
+			return first[i];
+		}
+
+		constexpr const T &at(size_t i) const noexcept {
+			return first[i];
+		}
+
+		constexpr T &operator[](size_t i) noexcept {
+			return first[i];
+		}
+
+		constexpr const T &operator[](size_t i) const noexcept {
+			return first[i];
+		}
+
+		constexpr T &front() noexcept {
+			return *first;
+		}
+
+		constexpr const T &front() const noexcept {
+			return *first;
+		}
+
+		constexpr T &back() noexcept {
+			return *last;
+		}
+
+		constexpr const T &back() const noexcept {
+			return *last;
+		}
+
+		constexpr T *data() noexcept {
+			return first;
+		}
+
+		constexpr const T *data() const noexcept {
+			return first;
+		}
+
+		constexpr T *begin() noexcept {
+			return first;
+		}
+
+		constexpr const T *begin() const noexcept {
+			return first;
+		}
+
+		constexpr const T *cbegin() const noexcept {
+			return first;
+		}
+
+		constexpr T *end() noexcept {
+			return last;
+		}
+
+		constexpr const T *end() const noexcept {
+			return last;
+		}
+
+		constexpr const T *cend() const noexcept {
+			return last;
+		}
+
+		constexpr bool empty() const noexcept {
+			return first == last;
+		}
+
+		constexpr size_t size() const noexcept {
+			return last - first;
+		}
+
+		constexpr void reserve(size_t length) noexcept {
+			if (length <= capacity()) {
+				return;
+			}
+			grow(length);
+		}
+
+		constexpr size_t capacity() const noexcept {
+			return eos - first;
+		}
+
+		constexpr void shrink_to_fit() noexcept {
+			if (size() <= capacity()) {
+				return;
+			}
+			first = reallocate(first, size());
+		}
+
+		constexpr void clear() noexcept {
+			if constexpr(!__is_trivially_destructible(T)) {
+				const size_t length = size();
+				for (size_t i = 0; i < length; i++) {
+					first[i].~T();
+				}
+			}
+			last = first;
+		}
+
+		// ok I got lazy
+
+		//
+
+		constexpr T *erase(const T *pos) noexcept {
+			const size_t i = pos - first;
+			if constexpr(!__is_trivially_destructible(T)) {
+				first[i].~T();
+			}
+			if (first + i != --last) {
+				__builtin_memcpy(last - i, first + i, size() * sizeof(T));
+			}
+			return last;
+		}
+
+		template<class... Args>
+		constexpr T &emplace_back(Args&&... args) noexcept {
+			return *last++ = T{args...};
+		}
+
+		constexpr void push_back(const T &value) noexcept {
+			*last++ = value;
+		}
+
+		constexpr void push_back(T &&value) noexcept {
+			*last++ = static_cast<T&&>(value);
+		}
+
+		constexpr void pop_back() noexcept {
+			last--;
+			if constexpr(!__is_trivially_destructible(T)) {
+				*last.~T();
+			}
+		}
+
+		constexpr void resize(size_t count) noexcept {
+			const size_t length = size();
+			if (length == count) {
+				return;
+			}
+			setSize(count, length, T());
+		}
+
+		constexpr void resize(size_t count, const T &value) noexcept {
+			const size_t length = size();
+			if (length == count) {
+				return;
+			}
+			setSize(count, length, value);
+		}
+
+		constexpr void swap(Vector<T> &other) noexcept {
+			swap(*this, other);
 		}
 };
 

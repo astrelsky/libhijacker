@@ -86,3 +86,53 @@ class JThread : public Thread {
 			join();
 		}
 };
+
+class ScopedLock {
+	friend class Mutex;
+
+	pthread_mutex_t *mtx;
+
+	ScopedLock() = delete;
+	ScopedLock(pthread_mutex_t *mtx) noexcept : mtx(mtx) {
+		pthread_mutex_lock(mtx);
+	}
+
+	public:
+		ScopedLock(const ScopedLock&) = delete;
+		ScopedLock &operator=(const ScopedLock&) = delete;
+		ScopedLock(ScopedLock &&rhs) noexcept : mtx(rhs.mtx) {
+			rhs.mtx = nullptr;
+		}
+		ScopedLock &operator=(ScopedLock &&rhs) noexcept {
+			if (mtx != nullptr) {
+				std::terminate();
+			}
+			mtx = rhs.mtx;
+			rhs.mtx = nullptr;
+			return *this;
+		}
+		~ScopedLock() noexcept {
+			if (mtx != nullptr) {
+				pthread_mutex_unlock(mtx);
+			}
+		}
+};
+
+class Mutex {
+	pthread_mutex_t mtx;
+
+	public:
+		Mutex() noexcept : mtx{} {
+			pthread_mutex_init(&mtx, nullptr);
+		}
+		Mutex(const Mutex&) = delete;
+		Mutex &operator=(const Mutex&) = delete;
+		Mutex(Mutex &&rhs)= delete;
+		Mutex &operator=(Mutex &&rhs) = delete;
+		~Mutex() noexcept {
+			pthread_mutex_destroy(&mtx);
+		}
+		ScopedLock lock() noexcept {
+			return &mtx;
+		}
+};
