@@ -12,7 +12,6 @@ add_subdirectory(daemon)
 add_subdirectory(daemon_shim)
 add_subdirectory(libhijacker)
 add_subdirectory(spawner)
-add_subdirectory(homebrew)
 
 # this was too complicated
 #include(FetchContent)
