@@ -32,6 +32,8 @@ jobs:
 
     - name: Checkout
       uses: actions/checkout@v3
+      with:
+        submodules: recursive
 
     - name: Checkout PS5SDK
       uses: actions/checkout@v3
