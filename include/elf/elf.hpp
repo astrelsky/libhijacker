@@ -7,19 +7,19 @@ extern "C" {
 }
 
 #include "hijacker.hpp"
-#include <util.hpp>
+#include "util.hpp"
 
-struct SymbolLookupTable;
+class ManagedResolver;
 
 constexpr auto i = sizeof(Elf64_Dyn);
 
 class Elf : Elf64_Ehdr {
 
 	public:
-	struct MappedMemory {
-		uintptr_t mem;
-		size_t len;
-	};
+		struct MappedMemory {
+			uintptr_t mem;
+			size_t len;
+		};
 
 	private:
 	dbg::Tracer tracer;
@@ -36,7 +36,7 @@ class Elf : Elf64_Ehdr {
 	size_t textOffset;
 	uintptr_t imagebase;
 	uint8_t *data;
-	Array<SymbolLookupTable> libs;
+	UniquePtr<ManagedResolver> resolver;
 	Array<MappedMemory> mappedMemory;
 	int jitFd;
 

@@ -107,10 +107,6 @@ class SharedLib : public KernelObject<SharedLib, SHARED_LIB_SIZE> {
 	mutable Array<SharedLibSection> sections;
 	mutable UniquePtr<RtldMeta> meta;
 
-	uintptr_t getDynlibData() const {
-		return get<uintptr_t, DYNLIB_OFFSET>();
-	}
-
 	public:
 		int pid;
 
@@ -188,7 +184,7 @@ class SharedLib : public KernelObject<SharedLib, SHARED_LIB_SIZE> {
 
 		RtldMeta *getMetaData() const {
 			if (meta == nullptr) [[unlikely]] {
-				uintptr_t addr = getDynlibData();
+				uintptr_t addr = getMetaDataAddress();
 				if (addr) {
 					meta = newRtldMeta(imagebase(), addr);
 				} else {
@@ -196,6 +192,10 @@ class SharedLib : public KernelObject<SharedLib, SHARED_LIB_SIZE> {
 				}
 			}
 			return meta.get();
+		}
+
+		uintptr_t getMetaDataAddress() const {
+			return get<uintptr_t, DYNLIB_OFFSET>();
 		}
 
 		EhFrameInfo getEhFrameInfo() const {
@@ -257,6 +257,9 @@ class SharedLibIterable {
 			addr = ptr;
 			return *this;
 		}
+		uintptr_t getAddress() const noexcept {
+			return addr;
+		}
 };
 
 struct SharedLibIterator {
@@ -301,7 +304,7 @@ class SharedObject : KernelObject<SharedObject, SHARED_OBJECT_SIZE> {
 			return eboot.get();
 		}
 
-		UniquePtr<SharedLib> getLib(int handle) {
+		UniquePtr<SharedLib> getLib(int handle) const {
 			for (auto lib : getLibs()) {
 				if (lib->handle() == handle) {
 					return lib.release();
@@ -430,6 +433,10 @@ class rtld::ElfStringTable {
 		Nid getNid(size_t offset) const {
 			return Nid{tbl.get() + offset};
 		}
+
+		const char *c_str() const noexcept {
+			return tbl.get();
+		}
 };
 
 class rtld::ElfSymbol : public Elf64_Sym {
@@ -525,6 +532,10 @@ class rtld::ElfSymbolTable {
 
 		size_t length() const {
 			return size;
+		}
+
+		const Elf64_Sym *c_symbols() const noexcept {
+			return symbols.get();
 		}
 };
 

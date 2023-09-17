@@ -19,3 +19,5 @@ CMakeCache.txt
 aerolib.csv
 stubber/main.exe
 stubber/out/
+assets/
+homebrew/

@@ -11,8 +11,7 @@
 #include "offsets.hpp"
 #include "util.hpp"
 #include <elf.h>
-#include <sys/_pthreadtypes.h>
-#include <sys/_stdint.h>
+#include <sys/sysctl.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -638,6 +637,11 @@ class UnixSocket : public FileDescriptor {
 		}
 };
 
+static bool isProcessAlive(int pid) noexcept {
+	int mib[]{CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
+	return sysctl(mib, 4, nullptr, nullptr, nullptr, 0) == 0;
+}
+
 
 static void *hookThread(void *args) noexcept {
 	static constexpr int PING =  0;
@@ -717,10 +721,15 @@ static void *hookThread(void *args) noexcept {
 
 	puts("execve completed");
 
-	while (helper->spawned == nullptr) {
-		usleep(100); // NOLINT
+	do { // NOLINT
 		helper->spawned = Hijacker::getHijacker(pid);
-	}
+		if (helper->spawned == nullptr) {
+			if (isProcessAlive(pid)) {
+				puts("process died");
+				return nullptr;
+			}
+		}
+	} while (helper->spawned == nullptr);
 
 	uintptr_t base = helper->spawned->getLibKernelBase();
 
@@ -769,8 +778,6 @@ extern "C" int main() {
 	Helper helper{nanosleepOffset, nullptr};
 	pthread_t td = nullptr;
 	pthread_create(&td, nullptr, hookThread, &helper);
-
-	usleep(100000); // NOLINT(*)
 
 	int appId = 0;
 	if (!launchApp("BREW00000", &appId)) {

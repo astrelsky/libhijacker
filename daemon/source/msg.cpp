@@ -149,6 +149,7 @@ bool notifyHandlers(const uint32_t prefix, const pid_t pid, const bool isHomebre
 	if (isHomebrew) {
 		// prefix handlers are notified first since they are responsible for loading the elf if applicable
 		// listeners need not be notified
+		printf("homebrew launched %d\n", pid);
 		return prefixHandlers.handle(prefix, pid);
 	}
 	launchListeners.handle(pid);

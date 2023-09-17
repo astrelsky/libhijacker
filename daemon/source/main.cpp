@@ -93,7 +93,7 @@ static bool runElf(Hijacker *hijacker, uint8_t *data) {
 
 static bool load(UniquePtr<Hijacker> &spawned, uint8_t *data) {
 	puts("setting process name");
-	spawned->getProc()->setName("HomebrewDaemon"_sv);
+	spawned->getProc()->setName("HomebrewApp"_sv);
 	__builtin_printf("new process %s pid %d\n", spawned->getProc()->getSelfInfo()->name, spawned->getPid());
 	puts("jailbreaking new process");
 	spawned->jailbreak(false);
@@ -217,6 +217,8 @@ static bool handleIpc(const int syscore, const int fd) noexcept {
 		}
 	}
 
+	puts("handling ipc");
+
 	if (res.cmd != PROCESS_LAUNCHED) {
 		printf("unexpected command %d\n", res.cmd);
 		return result;
@@ -320,7 +322,9 @@ class UnixSocket : public FileDescriptor {
 		}
 };
 
-void dummy(int) {}
+void dummy(int) {
+	puts("signal received");
+}
 
 static void *hookThread(void *args) noexcept {
 	signal(SIGUSR1, dummy);
@@ -372,9 +376,9 @@ int main() {
 	pthread_kill(elfHandler, SIGUSR1);
 	pthread_join(elfHandler, nullptr);
 	puts("elf handler done");
-	puts("stopping klog server");
-	klogServer.stop();
-	puts("klog server done");
+	//puts("stopping klog server");
+	//klogServer.stop();
+	//puts("klog server done");
 
 	// TODO add elf loader with options for process name and type (daemon/game)
 	// add whatever other crap people may want

@@ -247,11 +247,8 @@ async def has_homebrew_daemon(host: str) -> bool:
 
 async def logger_client(args: ParsedArgs):
     async with SEM:
-        async with open_connection(args.host, LOGGER_PORT) as (reader, writer):
+        async with open_connection(args.host, LOGGER_PORT) as (reader, _):
             reader._buffer = LineBuffer(reader._buffer)
-            writer.write(args.spawner.read_bytes())
-            writer.write_eof()
-            await writer.drain()
             await log_task(reader, args.logger, args.silent)
         print('logger client finished')
 

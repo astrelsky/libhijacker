@@ -32,6 +32,8 @@ extern "C" {
 	extern const uint64_t _pipe_addr;
 }
 
+#include "nid_resolver/resolver.h"
+
 #ifndef IPV6_2292PKTOPTIONS
 #define IPV6_2292PKTOPTIONS 25 // NOLINT(*)
 #endif
@@ -54,137 +56,6 @@ constexpr uintptr_t MAP_FAILED = ~0ULL;
 
 };
 
-struct NidKeyValue {
-	Nid nid; 		// packed to fit in 12 bytes
-	uint32_t index; // index into symtab (which is a 32 bit integer)
-	constexpr int_fast64_t operator<=>(const Nid &rhs) const {
-		return nid <=> rhs;
-	}
-}; // total size is 16 bytes to allow a memcpy size of a multiple of 16
-
-class NidMap {
-	// this implementation is stupid
-	// don't try this one at home
-
-	friend struct SymbolLookupTable;
-
-	UniquePtr<NidKeyValue[]> nids;
-	uint_fast32_t size;
-	// there is no intention of ever growing this since the symtab size is known
-
-	int_fast64_t binarySearch(const Nid &key) const {
-		int_fast64_t lo = 0;
-		int_fast64_t hi = static_cast<int_fast64_t>(size) - 1;
-
-		while (lo <= hi) {
-			const auto m = (lo + hi) >> 1;
-			const auto n = nids[m].nid <=> key;
-
-			if (n == 0) [[unlikely]] {
-				return m;
-			}
-
-			if (n < 0)
-				lo = m + 1;
-			else
-				hi = m - 1;
-		}
-		return -(lo + 1);
-	}
-
-	static int_fast64_t toIndex(int_fast64_t i) {
-		return -(i + 1);
-	}
-
-	NidKeyValue &insert(const Nid &key, uint_fast32_t i) {
-		if (size++ == i) [[unlikely]] {
-			// append
-			NidKeyValue &value = nids[i];
-			value.nid = key;
-			return value;
-		}
-		__builtin_memcpy(nids.get() + i + 1, nids.get() + i, sizeof(NidKeyValue) * (size - i));
-		NidKeyValue &value = nids[i];
-		value.nid = key;
-		return value;
-	}
-
-	NidKeyValue &insert(const Nid &key) {
-		auto index = binarySearch(key);
-		if (index < 0) {
-			return insert(key, toIndex(index));
-		}
-		return nids[index];
-	}
-
-	NidMap(decltype(nullptr)) : nids(nullptr), size() {}
-	NidMap(uint_fast32_t capacity) : nids(new NidKeyValue[capacity]()), size(0) {}
-	NidMap &operator=(uint_fast32_t capacity) {
-		nids = new NidKeyValue[capacity]();
-		return *this;
-	}
-	uint_fast32_t length() const { return size; }
-
-	const NidKeyValue *operator[](const Nid &key) const {
-		auto index = binarySearch(key);
-		if (index < 0) {
-			return nullptr;
-		}
-		return nids.get() + index;
-	}
-};
-
-struct SymbolLookupTable {
-
-	NidMap nids;
-	UniquePtr<SharedLib> lib;
-
-	void fillTable() {
-		const rtld::ElfSymbolTable &symbols = lib->getMetaData()->getSymbolTable();
-		const auto len = symbols.length();
-		// remember to skip the first null symbol
-		for (size_t i = 1; i < len; i++) {
-			const auto sym = symbols[i];
-			auto &kv = nids.insert(sym.nid());
-			kv.index = i;
-		}
-	}
-
-	public:
-		SymbolLookupTable() : nids(nullptr), lib(nullptr) {}
-		SymbolLookupTable(SharedLib *lib) :
-			// while not obvious, nchain == length of symtab
-			nids(lib->getMetaData()->nSymbols()), lib(lib){}
-
-		SymbolLookupTable &operator=(SharedLib *lib) {
-			nids = lib->getMetaData()->nSymbols();
-			this->lib = lib;
-			return *this;
-		}
-
-		const rtld::ElfSymbol operator[](const Nid &nid) {
-			auto *value = nids[nid];
-			if (value == nullptr) [[unlikely]] {
-				return nullptr;
-			}
-			return lib->getMetaData()->getSymbolTable()[value->index];
-		}
-
-		const rtld::ElfSymbol operator[](const char *sym) {
-			Nid nid; // NOLINT(cppcoreguidelines-pro-type-member-init) we're initializing it in fillNid
-			fillNid(nid, sym);
-			return (*this)[nid];
-		}
-
-		explicit operator bool() const {
-			return lib != nullptr;
-		}
-
-		size_t length() const {
-			return nids.length();
-		}
-};
-
 Elf::~Elf() noexcept {
 	// tracer detaches on destruction and the loaded elf runs
 } // must be defined after SymbolLookupTable
@@ -194,12 +65,12 @@ Elf::Elf(Hijacker *hijacker, uint8_t *data) noexcept :
 		phdrs(reinterpret_cast<Elf64_Phdr*>(data + e_phoff)), strtab(),
 		strtabLength(), symtab(), symtabLength(), relatbl(), relaLength(),
 		plt(), pltLength(), hijacker(hijacker), textOffset(), imagebase(),
-		data(data), libs(nullptr), mappedMemory(nullptr), jitFd(-1) {
+		data(data), resolver(nullptr), mappedMemory(nullptr), jitFd(-1) {
 	// TODO check the elf magic stupid
 	//hexdump(data, sizeof(Elf64_Ehdr));
 }
 
-bool loadLibraries(Hijacker &hijacker, const dbg::Tracer &tracer, const Array<String> &paths, Array<SymbolLookupTable> &libs, const size_t reserved) noexcept;
+bool loadLibraries(Hijacker &hijacker, const dbg::Tracer &tracer, const Array<String> &paths, ManagedResolver &resolver) noexcept;
 
 bool Elf::parseDynamicTable() noexcept {
 	const Elf64_Dyn *__restrict dyntbl = nullptr;
@@ -327,15 +198,8 @@ bool Elf::parseDynamicTable() noexcept {
 	// remove unset values
 	names.shrink(i);
 
-	libs = {handleCount + names.length()};
-
-	if (names.length() > 0) {
-		puts("loading libraries");
-		if (!loadLibraries(*hijacker, tracer, names, libs, handleCount)) {
-			__builtin_printf("failed to load libraries\n");
-			return false;
-		}
-	}
+	resolver = new ManagedResolver{};
+	resolver->reserve_library_memory(handleCount + names.length());
 
 	puts("filling symbol tables");
 	for (auto i = 0; i < handleCount; i++) {
@@ -344,8 +208,18 @@ bool Elf::parseDynamicTable() noexcept {
 			printf("failed to get lib for 0x%x\n", (unsigned int) preLoadedHandles[i]);
 			return false;
 		}
-		SymbolLookupTable &lib = libs[i] = ptr.release();
-		lib.fillTable();
+		if (resolver->add_library_metadata(ptr->imagebase(), ptr->getMetaDataAddress()) != 0) {
+			printf("failed to add library metadata for 0x%x\n", (unsigned int) preLoadedHandles[i]);
+			return false;
+		}
+	}
+
+	if (names.length() > 0) {
+		puts("loading libraries");
+		if (!loadLibraries(*hijacker, tracer, names, *resolver)) {
+			__builtin_printf("failed to load libraries\n");
+			return false;
+		}
 	}
 
 	puts("finished process dynamic table");
@@ -396,7 +270,7 @@ static constexpr int PROT_EXEC = 4;
 static constexpr int PROT_GPU_READ = 0x10;
 static constexpr int PROT_GPU_WRITE = 0x20;
 
-static bool loadLibrariesInplace(Hijacker &hijacker, const Array<String> &names, Array<SymbolLookupTable> &libs, const size_t reserved) noexcept {
+static bool loadLibrariesInplace(Hijacker &hijacker, const Array<String> &names, ManagedResolver &resolver) noexcept {
 	for (const auto &name : names) {
 		const auto id = SYSMODULES[name];
 		int handle = id != 0 ? sceSysmoduleLoadModuleInternal(id) :
@@ -414,16 +288,17 @@ static bool loadLibrariesInplace(Hijacker &hijacker, const Array<String> &names,
 			printf("failed to get lib handle for %s\n", names[i].c_str());
 			return false;
 		}
-
-		SymbolLookupTable &lib = libs[i + reserved] = ptr.release();
-		lib.fillTable();
+		if (resolver.add_library_metadata(ptr->imagebase(), ptr->getMetaDataAddress()) != 0) {
+			printf("failed to add library metadata for %s\n", names[i].c_str());
+			return false;
+		}
 	}
 	return true;
 }
 
-bool loadLibraries(Hijacker &hijacker, const dbg::Tracer &tracer, const Array<String> &names, Array<SymbolLookupTable> &libs, const size_t reserved) noexcept {
+bool loadLibraries(Hijacker &hijacker, const dbg::Tracer &tracer, const Array<String> &names, ManagedResolver &resolver) noexcept {
 	if (hijacker.getPid() == getpid()) {
-		return loadLibrariesInplace(hijacker, names, libs, reserved);
+		return loadLibrariesInplace(hijacker, names, resolver);
 	}
 
 	static constexpr uint32_t INTERNAL_MASK = 0x80000000;
@@ -494,8 +369,10 @@ bool loadLibraries(Hijacker &hijacker, const dbg::Tracer &tracer, const Array<St
 			return false;
 		}
 
-		SymbolLookupTable &lib = libs[i + reserved] = ptr.release();
-		lib.fillTable();
+		if (resolver.add_library_metadata(ptr->imagebase(), ptr->getMetaDataAddress()) != 0) {
+			printf("failed to add library metadata for %s\n", names[i].c_str());
+			return false;
+		}
 	}
 
 	puts("finished loading libraries");
@@ -836,6 +713,7 @@ uintptr_t Elf::getSymbolAddress(const Elf64_Rela *__restrict rel) const noexcept
 	if (symtab == nullptr || strtab == nullptr) [[unlikely]] {
 		return true;
 	}
+
 	const Elf64_Sym *__restrict sym = symtab + ELF64_R_SYM(rel->r_info);
 	if (sym->st_value != 0) {
 		// the symbol exists in our elf
@@ -843,14 +721,15 @@ uintptr_t Elf::getSymbolAddress(const Elf64_Rela *__restrict rel) const noexcept
 		// this was a mistake and I'm an idiot but it may be useful in the future
 		return imagebase + sym->st_value;
 	}
-	for (auto &lib : libs) {
-		auto libsym = lib[strtab + sym->st_name];
-		if (libsym && libsym.exported()) {
-			return libsym.vaddr();
-		}
-	}
+
 	if (ELF64_ST_BIND(sym->st_info) == STB_WEAK) {
 		return -1;
+	}
+
+	const auto libsym = resolver->lookup_symbol(strtab + sym->st_name);
+
+	if (libsym) {
+		return libsym;
 	}
 	printf("symbol lookup for %s failed\n", strtab + sym->st_name);
 	return 0;

@@ -40,7 +40,7 @@ class UniquePtr {
 	T *ptr;
 
 	public:
-		UniquePtr() = delete;
+		explicit UniquePtr() : ptr(nullptr) {}
 		UniquePtr(decltype(nullptr)) : ptr(nullptr) {}
 		UniquePtr(T *ptr) : ptr(ptr) {}
 		UniquePtr(const UniquePtr &rhs) = delete;
@@ -280,8 +280,12 @@ class String {
 	}
 
 	public:
-		explicit String() : data(), size(0), capacity(SSO_MAX) { data.buf[0] = '\0'; }
-		String(const StringView &view) : size(view.length()), capacity(align(view.length()+1)) {
+		explicit String() noexcept : data(), size(0), capacity(SSO_MAX) { data.buf[0] = '\0'; }
+		String(int v) noexcept : data(), size(snprintf(data.buf, SSO_MAX, "%d", v)), capacity(SSO_MAX) {
+		}
+		String(uint32_t v) noexcept : data(), size(snprintf(data.buf, SSO_MAX, "%u", v)), capacity(SSO_MAX) {
+		}
+		String(const StringView &view) noexcept : size(view.length()), capacity(align(view.length()+1)) {
 			if (is_sso()) {
 				__builtin_memcpy(data.buf, view.c_str(), size);
 				*(data.buf + size) = '\0';
@@ -365,7 +369,7 @@ class String {
 			return *this; // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
 		}
 
-		String operator+(const StringView &rhs) {
+		String operator+(const StringView &rhs) const noexcept {
 			String res = *this;
 			res += rhs;
 			return res;
@@ -446,7 +450,19 @@ class String {
 				grow(i);
 			}
 		}
+
+		String operator+(const String& rhs) const noexcept {
+			String cpy{*this};
+			cpy += rhs;
+			return cpy;
+		}
 };
+
+inline String operator+(const StringView& lhs, const StringView& rhs) noexcept {
+	String cpy{lhs};
+	cpy += rhs;
+	return cpy;
+}
 
 // NOLINTEND(cppcoreguidelines-owning-memory, cppcoreguidelines-pro-type-member-init)
 

@@ -104,6 +104,16 @@ int __attribute__ ((naked))	unlink(const char *path) {
 	__asm__ volatile("jmp *f_unlink(%rip)");
 }
 
+static __attribute__ ((used)) void *f_realloc = nullptr;
+void *__attribute__ ((naked)) realloc(void *ptr, size_t length) {
+	__asm__ volatile("jmp *f_realloc(%rip)");
+}
+
+static __attribute__ ((used)) void *f_perror = nullptr;
+int __attribute__ ((naked))	perror(const char *msg) {
+	__asm__ volatile("jmp *f_perror(%rip)");
+}
+
 STUB(sceUserServiceGetForegroundUser)
 STUB(getpid)
 STUB(getppid)
@@ -123,6 +133,7 @@ STUB(open)
 STUB(mkdir)
 STUB(stat)
 STUB(printf)
+STUB(snprintf)
 STUB(_ZdaPv)
 STUB(_Znam)
 STUB(_Znwm)
@@ -137,7 +148,7 @@ STUB(__error)
 STUB(strerror)
 STUB(sceKernelPrintBacktraceWithModuleInfo)
 STUB(waitpid)
-STUB(perror)
+STUB(sysctl)
 STUB(pthread_create)
 STUB(pthread_join)
 
@@ -195,6 +206,7 @@ void _start(struct payload_args *args) {
 	LIBKERNEL_LINK(pthread_create);
 	LIBKERNEL_LINK(pthread_join);
 	LIBKERNEL_LINK(kill);
+	LIBKERNEL_LINK(sysctl);
 
 
 	LIBC_LINK(_Znwm);
@@ -209,7 +221,9 @@ void _start(struct payload_args *args) {
 	LIBC_LINK(memcmp);
 	LIBC_LINK(strcmp);
 	LIBC_LINK(printf);
+	LIBC_LINK(snprintf);
 	LIBC_LINK(perror);
+	LIBC_LINK(realloc);
 
 	LIBC_LINK(strstr);
 	LIBC_LINK(strlen);

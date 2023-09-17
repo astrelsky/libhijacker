@@ -58,11 +58,11 @@ set(D_SRC ${D_CWD}/source)
 
 file(GLOB SrcFiles ${D_SRC}/*.c ${D_SRC}/*.cpp ${D_SRC}/**/*.cpp ${D_SRC}/*.h ${D_SRC}/*.hpp ${D_SRC}/**/*.hpp ${D_SRC}/*.s)
 
-set(CMAKE_C_FLAGS "--target=x86_64-freebsd-pc-elf -O0 -march=znver2 -mavx2 -DPPR -DPS5 -DPS5_FW_VERSION=${V_FW} ")
+set(CMAKE_C_FLAGS "--target=x86_64-freebsd-pc-elf -O0 -march=znver2 -DPPR -DPS5 -DPS5_FW_VERSION=${V_FW} ")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_POSIX_SOURCE -D_POSIX_C_SOURCE=200112 -D__BSD_VISIBLE=1 -D__XSI_VISIBLE=500")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-builtin -nostdlib -Wall") #  -nostartfiles
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
-set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS}  -O3 -march=znver2 -mavx2 -Wall -Wextra -Wmove -Wmost -Werror -pedantic -pedantic-errors -fno-exceptions -Wno-unused-function")
+set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -O3 -march=znver2 -Wall -Wextra -Wmove -Wmost -Werror -pedantic -pedantic-errors -fno-exceptions -Wno-unused-function")
 set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -Wno-unused-command-line-argument")
 
 target_sources(${PROJECT_NAME} PRIVATE ${SrcFiles})

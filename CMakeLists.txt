@@ -12,3 +12,15 @@ add_subdirectory(daemon)
 add_subdirectory(daemon_shim)
 add_subdirectory(libhijacker)
 add_subdirectory(spawner)
+add_subdirectory(homebrew)
+
+# this was too complicated
+#include(FetchContent)
+#FetchContent_Declare(
+#  NidResolver
+#  GIT_REPOSITORY https://github.com/astrelsky/libNidResolver.git
+#  OVERRIDE_FIND_PACKAGE
+#)
+#FetchContent_MakeAvailable(NidResolver)
+
+add_subdirectory(libNidResolver)

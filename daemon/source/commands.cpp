@@ -101,7 +101,7 @@ void CommandServer::run(TcpSocket &sock) {
 }
 
 static void __attribute__((constructor)) initUserService() {
-	static constexpr auto DEFAULT_PRIORITY = 256;
+	static constexpr auto DEFAULT_PRIORITY = 100;
 	int priority = DEFAULT_PRIORITY;
 	sceUserServiceInitialize(&priority);
 }
