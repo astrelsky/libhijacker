@@ -8,7 +8,7 @@ struct AppMessage;
 
 extern "C" uint32_t sceAppMessagingSendMsg(uint32_t appId, uint32_t msgType, const void *msg, size_t msgLength, uint32_t flags);
 
-extern "C" int sceAppMessagingReceiveMsg(const AppMessage *msg);
+extern "C" int sceAppMessagingReceiveMsg(AppMessage *msg);
 
 struct AppMessage {
 	static constexpr size_t PAYLOAD_SIZE = 8192;
