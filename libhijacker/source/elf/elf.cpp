@@ -688,6 +688,7 @@ static void correctRsp(dbg::Registers &regs) noexcept {
 }
 
 bool Elf::start(uintptr_t args) noexcept {
+        printf("imagebase: 0x%08llx\n", imagebase);
 	if (hijacker->getPid() == getpid()) {
 		auto fun = reinterpret_cast<int(*)(uintptr_t)>(imagebase + e_entry); // NOLINT(*)
 		bool res = fun(args) == 0;
@@ -700,7 +701,6 @@ bool Elf::start(uintptr_t args) noexcept {
 	(void) args;
 	dbg::Registers regs = tracer.getRegisters();
 	correctRsp(regs);
-	printf("imagebase: 0x%08llx\n", imagebase);
 	regs.rdi(args);
 	regs.rip(imagebase + e_entry);
 	tracer.setRegisters(regs);
