@@ -32,9 +32,9 @@ void printBacktrace() {
 	for (const Frame *__restrict frame = getFramePointer(); frame != nullptr; frame = frame->next) {
 		if (frame->addr != 0) [[likely]] {
 			if (frame->addr >= start && frame->addr <= stop) {
-				__builtin_printf("0x%llx\n", (unsigned long long)frame->addr - start);
+				__builtin_printf("0x%llx ", (unsigned long long)frame->addr - start);
 			}
 		}
 	}
-	puts("---backtrace end---");
+	puts("\n---backtrace end---");
 }
