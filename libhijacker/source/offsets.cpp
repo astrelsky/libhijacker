@@ -36,6 +36,9 @@ size_t allproc() {
 		case 0x3210000:
 			allprocOffset = 0x276DC58;
 			break;
+		case 0x4000000:
+			allprocOffset = 0x27EDCB8;
+			break;
 		case 0x4020000:
 			allprocOffset = 0x27EDCB8;
 			break;
@@ -65,6 +68,8 @@ size_t security_flags() {
 			return 0x6466474;
 		case 0x3210000:
 			return 0x6466474;
+		case 0x4000000:
+			return 0x6506474;
 		case 0x4020000:
 			return 0x6505474;
 		case 0x4030000:
@@ -88,6 +93,8 @@ size_t qa_flags() {
 			return 0x6466498;
 		case 0x3210000:
 			return 0x6466498;
+		case 0x4000000:
+			return 0x6506498;
 		case 0x4020000:
 			return 0x6505498;
 		case 0x4030000:
@@ -111,6 +118,8 @@ size_t utoken_flags() {
 			return 0x6466500;
 		case 0x3210000:
 			return 0x6466500;
+		case 0x4000000:
+			return 0x6506500;
 		case 0x4020000:
 			return 0x6505500;
 		case 0x4030000:
@@ -134,6 +143,8 @@ size_t root_vnode() {
 			return 0x67AB4C0;
 		case 0x3210000:
 			return 0x67AB4C0;
+		case 0x4000000:
+			return 0x66E74C0;
 		case 0x4020000:
 			return 0x66E64C0;
 		case 0x4030000:
