@@ -245,13 +245,14 @@ class SharedLibIterable {
 	int pid;
 
 	public:
-		SharedLibIterable(decltype(nullptr)) : addr(), pid() {}
-		SharedLibIterable(uintptr_t addr, int pid) : addr(addr), pid(pid) {}
-		bool operator!=(decltype(nullptr)) const { return addr != 0; }
+		SharedLibIterable(decltype(nullptr)) noexcept : addr(), pid() {}
+		SharedLibIterable(uintptr_t addr, int pid) noexcept : addr(addr), pid(pid) {}
+		bool operator==(decltype(nullptr)) const noexcept { return addr == 0; }
+		bool operator!=(decltype(nullptr)) const noexcept { return addr != 0; }
 		UniquePtr<SharedLib> operator*() {
-			return new SharedLib{addr, pid};
+			return {new SharedLib{addr, pid}};
 		}
-		SharedLibIterable &operator++() {
+		SharedLibIterable &operator++() noexcept {
 			uintptr_t ptr = 0;
 			kernel_copyout(addr, &ptr, sizeof(ptr));
 			addr = ptr;
@@ -262,18 +263,19 @@ class SharedLibIterable {
 		}
 };
 
-struct SharedLibIterator {
+class SharedLibIterator {
 
 	uintptr_t addr;
 	int pid;
 
-	SharedLibIterator(uintptr_t addr, int pid) : addr(addr), pid(pid) {}
-	SharedLibIterable begin() const {
-		return {addr, pid};
-	}
-	decltype(nullptr) end() const {
-		return nullptr;
-	}
+	public:
+		SharedLibIterator(uintptr_t addr, int pid) : addr(addr), pid(pid) {}
+		SharedLibIterable begin() const {
+			return {addr, pid};
+		}
+		decltype(nullptr) end() const {
+			return nullptr;
+		}
 
 };
 
@@ -286,10 +288,10 @@ class SharedObject : KernelObject<SharedObject, SHARED_OBJECT_SIZE> {
 	public:
 		int pid;
 
-		SharedObject(uintptr_t addr, int pid)
+		SharedObject(uintptr_t addr, int pid) noexcept
 			: KernelObject(addr), eboot(nullptr), pid(pid) {}
 
-		SharedLibIterator getLibs() const {
+		SharedLibIterator getLibs() const noexcept {
 			return {get<uintptr_t, 0>(), pid};
 		}
 
@@ -299,12 +301,12 @@ class SharedObject : KernelObject<SharedObject, SHARED_OBJECT_SIZE> {
 				if (ptr == 0) [[unlikely]] {
 					return nullptr;
 				}
-				eboot = new SharedLib{ptr, pid};
+				eboot = {new SharedLib{ptr, pid}};
 			}
 			return eboot.get();
 		}
 
-		UniquePtr<SharedLib> getLib(int handle) const {
+		UniquePtr<SharedLib> getLib(int handle) const noexcept {
 			for (auto lib : getLibs()) {
 				if (lib->handle() == handle) {
 					return lib.release();
@@ -313,7 +315,7 @@ class SharedObject : KernelObject<SharedObject, SHARED_OBJECT_SIZE> {
 			return nullptr;
 		}
 
-		UniquePtr<SharedLib> getLib(const StringView &name) const {
+		UniquePtr<SharedLib> getLib(const StringView &name) const noexcept {
 			String fullname = name;
 			if (!name.endswith(".sprx"_sv)) {
 				fullname += ".sprx"_sv;
@@ -526,10 +528,6 @@ class rtld::ElfSymbolTable {
 			return nullptr;
 		}
 
-		const ElfSymbol operator[](Nid &&nid) const {
-			return this->operator[](nid);
-		}
-
 		size_t length() const {
 			return size;
 		}
@@ -542,15 +540,15 @@ class rtld::ElfSymbolTable {
 namespace {
 
 static inline UniquePtr<RtldMeta> newRtldMeta(uintptr_t imageBase, uintptr_t addr) {
-	return new RtldMeta(imageBase, addr);
+	return {new RtldMeta(imageBase, addr)};
 }
 
 static inline UniquePtr<rtld::ElfSymbolTable> newSymbolTable(const RtldMeta *meta) {
-	return new rtld::ElfSymbolTable(meta);
+	return {new rtld::ElfSymbolTable(meta)};
 }
 
 static inline UniquePtr<rtld::ElfStringTable> newStringTable(const RtldMeta *meta) {
-	return new rtld::ElfStringTable(meta);
+	return {new rtld::ElfStringTable(meta)};
 }
 
 }

@@ -40,7 +40,7 @@ extern "C" {
 
 namespace {
 
-constexpr size_t NUM_PRELOADED_MODULES = 3;
+constexpr size_t NUM_PRELOADED_MODULES = 2;
 constexpr int LIBKERNEL_HANDLE = 0x2001;
 constexpr int LIBC_HANDLE = 2;
 //constexpr int LIBSYSMODULE_HANDLE = 0X11;
@@ -71,6 +71,65 @@ Elf::Elf(Hijacker *hijacker, uint8_t *data) noexcept :
 }
 
 bool loadLibraries(Hijacker &hijacker, const dbg::Tracer &tracer, const Array<String> &paths, ManagedResolver &resolver) noexcept;
+
+bool Elf::fillSymbolTables(const Array<String> &names, int handleCount, int *preLoadedHandles) noexcept {
+	resolver = {new ManagedResolver{}};
+	resolver->reserve_library_memory(handleCount + names.length());
+
+	puts("filling symbol tables");
+	for (auto i = 0; i < handleCount; i++) {
+		auto ptr = hijacker->getLib(preLoadedHandles[i]);
+		if (ptr == nullptr) [[unlikely]] {
+			printf("failed to get lib for 0x%x\n", (unsigned int) preLoadedHandles[i]);
+			return false;
+		}
+		if (resolver->add_library_metadata(ptr->imagebase(), ptr->getMetaDataAddress()) != 0) {
+			printf("failed to add library metadata for 0x%x\n", (unsigned int) preLoadedHandles[i]);
+			return false;
+		}
+	}
+
+	if (names.length() > 0) {
+		puts("loading libraries");
+		if (!loadLibraries(*hijacker, tracer, names, *resolver)) {
+			__builtin_printf("failed to load libraries\n");
+			return false;
+		}
+	}
+
+	puts("finished process dynamic table");
+	return true;
+}
+
+bool Elf::processLibs(List<const Elf64_Dyn *> &neededLibs) noexcept {
+	Array<String> names{neededLibs.length()};
+
+	int preLoadedHandles[NUM_PRELOADED_MODULES];
+	int handleCount = 0;
+	size_t i = 0;
+	for (const Elf64_Dyn *lib : neededLibs) {
+		StringView filename = strtab + lib->d_un.d_val;
+		if (!filename.endswith(".so"_sv)) [[unlikely]] {
+			__builtin_printf("unexpected library 0x%llx %s\n", (unsigned long long)lib->d_un.d_val, filename.c_str());
+			return false;
+		}
+		if (filename.startswith("libkernel"_sv)) {
+			*(preLoadedHandles + handleCount++) = LIBKERNEL_HANDLE;
+			continue;
+		}
+		if (filename == "libSceLibcInternal.so"_sv || filename == "libc.so"_sv) {
+			*(preLoadedHandles + handleCount++) = LIBC_HANDLE;
+			continue;
+		}
+
+		names[i++] = StringView{filename.c_str(), filename.length() - 3};
+	}
+
+	// remove unset values
+	names.shrink(i);
+
+	return fillSymbolTables(names, handleCount, preLoadedHandles);
+}
 
 bool Elf::parseDynamicTable() noexcept {
 	const Elf64_Dyn *__restrict dyntbl = nullptr;
@@ -167,63 +226,7 @@ bool Elf::parseDynamicTable() noexcept {
 		return true;
 	}
 
-	Array<String> names{neededLibs.length()};
-
-	int preLoadedHandles[NUM_PRELOADED_MODULES];
-	int handleCount = 0;
-	size_t i = 0;
-	for (const Elf64_Dyn *lib : neededLibs) {
-		StringView filename = strtab + lib->d_un.d_val;
-		if (!filename.endswith(".so"_sv)) [[unlikely]] {
-			__builtin_printf("unexpected library 0x%llx %s\n", (unsigned long long)lib->d_un.d_val, filename.c_str());
-			return false;
-		}
-		// I really do not want to implement a hashmap
-		if (filename.startswith("libkernel"_sv)) {
-			*(preLoadedHandles + handleCount++) = LIBKERNEL_HANDLE;
-			continue;
-		}
-		if (filename == "libSceLibcInternal.so"_sv || filename == "libc.so"_sv) {
-			*(preLoadedHandles + handleCount++) = LIBC_HANDLE;
-			continue;
-		}
-		//if (filename == "libSceSysmodule.so"_sv) {
-		//	*(preLoadedHandles + handleCount++) = LIBSYSMODULE_HANDLE;
-		//	continue;
-		//}
-
-		names[i++] = StringView{filename.c_str(), filename.length() - 3};
-	}
-
-	// remove unset values
-	names.shrink(i);
-
-	resolver = new ManagedResolver{};
-	resolver->reserve_library_memory(handleCount + names.length());
-
-	puts("filling symbol tables");
-	for (auto i = 0; i < handleCount; i++) {
-		auto ptr = hijacker->getLib(preLoadedHandles[i]);
-		if (ptr == nullptr) [[unlikely]] {
-			printf("failed to get lib for 0x%x\n", (unsigned int) preLoadedHandles[i]);
-			return false;
-		}
-		if (resolver->add_library_metadata(ptr->imagebase(), ptr->getMetaDataAddress()) != 0) {
-			printf("failed to add library metadata for 0x%x\n", (unsigned int) preLoadedHandles[i]);
-			return false;
-		}
-	}
-
-	if (names.length() > 0) {
-		puts("loading libraries");
-		if (!loadLibraries(*hijacker, tracer, names, *resolver)) {
-			__builtin_printf("failed to load libraries\n");
-			return false;
-		}
-	}
-
-	puts("finished process dynamic table");
-	return true;
+	return processLibs(neededLibs);
 }
 
 class TracedMemory {

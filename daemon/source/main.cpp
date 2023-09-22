@@ -8,6 +8,7 @@
 #include <sys/signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include "dbg.hpp"
@@ -185,6 +186,11 @@ static void killApp(int pid) noexcept {
 	}
 }
 
+static bool isProcessAlive(int pid) noexcept {
+	int mib[]{CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
+	return sysctl(mib, 4, nullptr, nullptr, nullptr, 0) == 0;
+}
+
 static bool handleIpc(const int syscore, const int fd) noexcept {
 	static constexpr int PING =  0;
 	static constexpr int PONG =  1;
@@ -246,15 +252,22 @@ static bool handleIpc(const int syscore, const int fd) noexcept {
 		dbg::Tracer tracer{pid};
 		auto regs = tracer.getRegisters();
 		regs.rip(res.func);
-		tracer.setRegisters(regs);
+		if (!tracer.setRegisters(regs)) {
+			puts("failed to set registers");
+		}
 
 		// run until execve completion
 		tracer.run();
 
-		while (spawned == nullptr) {
-			// this should grab it first try but I haven't confirmed yet
+		do { // NOLINT
 			spawned = Hijacker::getHijacker(pid);
-		}
+			if (spawned == nullptr) {
+				if (isProcessAlive(pid)) {
+					puts("process died");
+					return result;
+				}
+			}
+		} while (spawned == nullptr);
 
 		const uintptr_t nanosleepOffset = getNanosleepOffset(*spawned);
 
@@ -264,11 +277,9 @@ static bool handleIpc(const int syscore, const int fd) noexcept {
 
 		puts("success");
 
-		uintptr_t base = 0;
-		while (base == 0) {
-			// this should also work first try but not confirmed
-			base = spawned->getLibKernelBase();
-		}
+		uintptr_t base = spawned->getLibKernelBase();
+
+		printf("libkernel imagebase: 0x%08llx\n", base);
 
 		loop.setTarget(base + nanosleepOffset);
 		base = spawned->imagebase();

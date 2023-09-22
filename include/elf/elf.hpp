@@ -46,6 +46,8 @@ class Elf : Elf64_Ehdr {
 	bool processPltRelocations() noexcept;
 	bool load() noexcept;
 	bool start(uintptr_t args) noexcept;
+	bool fillSymbolTables(const Array<String> &names, int handleCount, int *preLoadedHandles) noexcept;
+	bool processLibs(List<const Elf64_Dyn *> &neededLibs) noexcept;
 	uintptr_t setupKernelRW() noexcept;
 	uintptr_t getSymbolAddress(const Elf64_Rela *__restrict rel) const noexcept;
 

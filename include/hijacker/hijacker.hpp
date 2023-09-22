@@ -63,7 +63,10 @@ class Hijacker {
 			auto obj = p->getSharedObject();
 
 			// obj may be a nullptr when racing process creation
-			return obj != nullptr ? new Hijacker{obj.release()} : nullptr;
+			if (obj != nullptr) {
+				return {new Hijacker{obj.release()}};
+			}
+			return nullptr;
 		}
 
 		UniquePtr<KProc> getProc() const {
