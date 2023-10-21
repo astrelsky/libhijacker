@@ -787,7 +787,7 @@ bool Elf::processRelocations() noexcept {
 				if (libsym == 0) [[unlikely]] {
 					return false;
 				}
-				*faddr<uintptr_t*>(rel->r_offset) = libsym + toFileOffset(rel->r_addend);
+				*faddr<uintptr_t*>(rel->r_offset) = libsym + rel->r_addend;
 				break;
 			}
 			case R_X86_64_GLOB_DAT: {
@@ -804,7 +804,7 @@ bool Elf::processRelocations() noexcept {
 			}
 			case R_X86_64_RELATIVE: {
 				// imagebase + addend
-				*faddr<uintptr_t*>(rel->r_offset) = imagebase + toFileOffset(rel->r_addend);
+				*faddr<uintptr_t*>(rel->r_offset) = toVirtualAddress(rel->r_addend);
 				break;
 			}
 			case R_X86_64_JMP_SLOT: {
