@@ -1,12 +1,14 @@
 #pragma once
 
+#include "dbg/dbg.hpp"
+#include "hijacker/hijacker.hpp"
 extern "C" {
 	#include <elf.h>
 	#include <sys/elf64.h>
 	#include <ps5/payload_main.h>
 }
 
-#include "hijacker.hpp"
+
 #include "util.hpp"
 
 class ManagedResolver;
@@ -34,6 +36,7 @@ class Elf : Elf64_Ehdr {
 	size_t pltLength;
 	Hijacker *__restrict hijacker;
 	size_t textOffset;
+	size_t textIndex;
 	uintptr_t imagebase;
 	uint8_t *data;
 	UniquePtr<ManagedResolver> resolver;
@@ -48,8 +51,16 @@ class Elf : Elf64_Ehdr {
 	bool start(uintptr_t args) noexcept;
 	bool fillSymbolTables(const Array<String> &names, int handleCount, int *preLoadedHandles) noexcept;
 	bool processLibs(List<const Elf64_Dyn *> &neededLibs) noexcept;
+	uintptr_t toFileOffset(uintptr_t addr) const noexcept;
+	uintptr_t toVirtualAddress(uintptr_t addr) const noexcept;
 	uintptr_t setupKernelRW() noexcept;
 	uintptr_t getSymbolAddress(const Elf64_Rela *__restrict rel) const noexcept;
+
+	template<typename T>
+	T faddr(uintptr_t addr) const noexcept {
+		// this was just sheer laziness
+		return reinterpret_cast<T>(data + toFileOffset(addr));
+	}
 
 	public:
 		Elf(Hijacker *hijacker, uint8_t *data) noexcept;

@@ -120,7 +120,7 @@ class KProc : public KernelObject<KProc, PROC_SIZE> {
 		}
 
 		UniquePtr<KUcred> ucred() const {
-			return new KUcred{p_ucred()};
+			return {new KUcred{p_ucred()}};
 		}
 
 		int p_pid() const {

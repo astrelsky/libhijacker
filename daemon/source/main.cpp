@@ -256,8 +256,21 @@ static bool handleIpc(const int syscore, const int fd) noexcept {
 			puts("failed to set registers");
 		}
 
-		// run until execve completion
-		tracer.run();
+		puts("running until execve completes");
+
+		for (size_t count = 1; count != 0; count++) {
+			// run until execve completion
+			int state = tracer.run();
+			printf("state 0x%x\n", state);
+			if (!tracer.getRegisters(regs)) {
+				puts("failed to read registers");
+				return result;
+			}
+			if (regs.fs() != 0) {
+				break;
+			}
+			printf("fs was 0 at run %llu\n", count);
+		}
 
 		do { // NOLINT
 			spawned = Hijacker::getHijacker(pid);

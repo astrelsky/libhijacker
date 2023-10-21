@@ -1,7 +1,7 @@
+#include "elf/elf.hpp"
 #include <stddef.h>
 #define _MMAP_DECLARED
 #include "dbg/dbg.hpp"
-#include "elfldr.hpp"
 #include "kernel/proc.hpp"
 #include "kernel/rtld.hpp"
 #include "sysmodules.hpp"
@@ -19,7 +19,6 @@ extern "C" {
 	#include <ps5/payload_main.h>
 	int puts(const char *);
 	int usleep(unsigned int useconds);
-	uintptr_t mmap(uintptr_t, size_t, int, int, int, off_t);
 	int munmap(uintptr_t addr, uint64_t len);
 	int sceKernelJitCreateSharedMemory(uintptr_t addr, size_t length, uint64_t flags, int *p_fd);
 	int *__error();
@@ -64,7 +63,7 @@ Elf::Elf(Hijacker *hijacker, uint8_t *data) noexcept :
 		Elf64_Ehdr(*reinterpret_cast<Elf64_Ehdr *>(data)), tracer(hijacker->getPid()),
 		phdrs(reinterpret_cast<Elf64_Phdr*>(data + e_phoff)), strtab(),
 		strtabLength(), symtab(), symtabLength(), relatbl(), relaLength(),
-		plt(), pltLength(), hijacker(hijacker), textOffset(), imagebase(),
+		plt(), pltLength(), hijacker(hijacker), textOffset(), textIndex(), imagebase(),
 		data(data), resolver(nullptr), mappedMemory(nullptr), jitFd(-1) {
 	// TODO check the elf magic stupid
 	//hexdump(data, sizeof(Elf64_Ehdr));
@@ -131,6 +130,22 @@ bool Elf::processLibs(List<const Elf64_Dyn *> &neededLibs) noexcept {
 	return fillSymbolTables(names, handleCount, preLoadedHandles);
 }
 
+uintptr_t Elf::toFileOffset(uintptr_t addr) const noexcept {
+	const auto *text = phdrs + textIndex;
+	if (addr >= text->p_vaddr)  {
+		return addr - text->p_vaddr + text->p_offset;
+	}
+	return addr;
+}
+
+uintptr_t Elf::toVirtualAddress(uintptr_t addr) const noexcept {
+	const auto *text = phdrs + textIndex;
+	if (addr >= text->p_vaddr)  {
+		addr -= text->p_vaddr;
+	}
+	return imagebase + addr;
+}
+
 bool Elf::parseDynamicTable() noexcept {
 	const Elf64_Dyn *__restrict dyntbl = nullptr;
 	for (size_t i = 0; i < e_phnum; i++) {
@@ -148,36 +163,34 @@ bool Elf::parseDynamicTable() noexcept {
 
 	List<const Elf64_Dyn *> neededLibs{};
 
-	uint8_t *const image = data + textOffset;
-
 	for (const Elf64_Dyn *dyn = dyntbl; dyn->d_tag != DT_NULL; dyn++) {
 		switch (dyn->d_tag) {
 			case DT_NEEDED:
 				neededLibs.push_front(dyn);
 				break;
 			case DT_RELA:
-				relatbl = reinterpret_cast<Elf64_Rela *>(image + dyn->d_un.d_ptr);
+				relatbl = faddr<Elf64_Rela *>(dyn->d_un.d_ptr);
 				break;
 			case DT_RELASZ:
 				relaLength = dyn->d_un.d_val / sizeof(Elf64_Rela);
 				break;
 			case DT_JMPREL:
-				plt = reinterpret_cast<Elf64_Rela *>(image + dyn->d_un.d_ptr);
+				plt = faddr<Elf64_Rela *>(dyn->d_un.d_ptr);
 				break;
 			case DT_PLTRELSZ:
 				pltLength = dyn->d_un.d_val / sizeof(Elf64_Rela);
 				break;
 			case DT_SYMTAB:
-				symtab = reinterpret_cast<Elf64_Sym *>(image + dyn->d_un.d_ptr);
+				symtab = faddr<Elf64_Sym *>(dyn->d_un.d_ptr);
 				break;
 			case DT_STRTAB:
-				strtab = reinterpret_cast<const char *>(image + dyn->d_un.d_ptr);
+				strtab = faddr<const char *>(dyn->d_un.d_ptr);
 				break;
 			case DT_STRSZ:
 				strtabLength = dyn->d_un.d_val;
 				break;
 			case DT_HASH:
-				symtabLength = reinterpret_cast<uint32_t *>(image + dyn->d_un.d_ptr)[1];
+				symtabLength = faddr<uint32_t *>(dyn->d_un.d_ptr)[1];
 				break;
 
 			// don't care for now
@@ -413,6 +426,7 @@ bool Elf::processProgramHeaders() noexcept {
 	size_t textLength = 0;
 	size_t totalSize = 0;
 	size_t numLoadable = 0;
+	textIndex = static_cast<size_t>(-1);
 	const Elf64_Phdr *__restrict text = nullptr;
 	for (auto i = 0; i < e_phnum; i++) {
 		const auto *__restrict phdr = phdrs + i;
@@ -423,10 +437,11 @@ bool Elf::processProgramHeaders() noexcept {
 				text = phdr;
 				textLength = pageAlign(phdr->p_memsz);
 				textOffset = phdr->p_offset;
+				textIndex = i;
 			}
 		}
 	}
-	if (textOffset == 0) {
+	if (textIndex == static_cast<size_t>(-1)) {
 		puts("no executable section found");
 		return false;
 	}
@@ -438,13 +453,15 @@ bool Elf::processProgramHeaders() noexcept {
 	}
 
 	uintptr_t mem = inplace ?
-		mmap(0, totalSize, PROT_READ, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) :
+		reinterpret_cast<uintptr_t>(mmap(0, totalSize, PROT_READ, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0)) :
 		tracer.mmap(0, totalSize, PROT_READ, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 
 	if (mem == MAP_FAILED) [[unlikely]] {
 		tracer.perror("mmap Elf::processProgramHeaders");
 		return false;
 	}
+
+	printf("Acquired elf memory at 0x%08llx\n", mem);
 
 	if (inplace) {
 		munmap(mem, totalSize);
@@ -464,8 +481,15 @@ bool Elf::processProgramHeaders() noexcept {
 	}
 
 	const auto prot = toMmapProt(text);
-	imagebase = inplace ? mmap(mem, textLength, prot, MAP_FIXED | MAP_SHARED, fd, 0) :
-		tracer.mmap(mem, textLength, prot, MAP_FIXED | MAP_SHARED, fd, 0);
+	if (inplace) [[unlikely]] {
+		void *ptr = reinterpret_cast<void *>(mem); // NOLINT(performance-no-int-to-ptr)
+		imagebase = reinterpret_cast<uintptr_t>(mmap(ptr, textLength, prot, MAP_FIXED | MAP_SHARED, fd, 0));
+	} else {
+		printf("mapping phdr with paddr 0x%08llx to address 0x%08llx\n", phdrs[textIndex].p_paddr, mem);
+		imagebase = tracer.mmap(mem, textLength, prot, MAP_FIXED | MAP_SHARED, fd, 0);
+		printf("mapped phdr with paddr 0x%08llx to address 0x%08llx\n", phdrs[textIndex].p_paddr, imagebase);
+	}
+
 	if (imagebase == MAP_FAILED) [[unlikely]] {
 		tracer.perror("mmap Elf::processProgramHeaders Tracer::mmap text");
 		return false;
@@ -491,11 +515,18 @@ bool Elf::processProgramHeaders() noexcept {
 			continue;
 		}
 
-		const auto addr = phdr->p_paddr + imagebase;
+		const auto addr = toVirtualAddress(phdr->p_paddr);
 		const auto sz = pageAlign(phdr->p_memsz);
 		const auto prot = toMmapProt(phdr);
-		auto result = inplace ? mmap(addr, sz, prot, MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) :
-			tracer.mmap(addr, sz, prot, MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+		uintptr_t result = MAP_FAILED;
+		if (inplace) [[unlikely]] {
+			void *ptr = reinterpret_cast<void *>(addr); // NOLINT(performance-no-int-to-ptr)
+			result = reinterpret_cast<uintptr_t>(mmap(ptr, sz, prot, MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
+		} else {
+			printf("mapping phdr with paddr 0x%08llx to address 0x%08llx\n", phdr->p_paddr, addr);
+			result = tracer.mmap(addr, sz, prot, MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+			printf("mapped phdr with paddr 0x%08llx to address 0x%08llx\n", phdr->p_paddr, result);
+		}
 		if (result == MAP_FAILED) [[unlikely]] {
 			tracer.perror("mmap Elf::processProgramHeaders Tracer::mmap data");
 			return false;
@@ -504,6 +535,7 @@ bool Elf::processProgramHeaders() noexcept {
 			puts("mmap Elf::processProgramHeaders mmap did not give the requested address");
 			return false;
 		}
+		printf("mapped program header with paddr 0x%08llx to virtual address 0x%08llx\n", phdr->p_paddr, addr);
 		if (inplace) {
 			mappedMemory[memIndex++] = {addr, sz};
 		}
@@ -626,6 +658,7 @@ uintptr_t Elf::setupKernelRW() noexcept {
 }
 
 bool Elf::load() noexcept {
+	printf("homebrew elf imagebase: 0x%08llx\n", imagebase);
 	for (size_t i = 0; i < e_phnum; i++) {
 		const Elf64_Phdr *__restrict phdr = phdrs + i;
 
@@ -633,7 +666,7 @@ bool Elf::load() noexcept {
 			continue;
 		}
 
-		const uintptr_t vaddr = phdr->p_paddr + imagebase;
+		const uintptr_t vaddr = toVirtualAddress(phdr->p_paddr);
 
 		if (vaddr == 0) {
 			continue;
@@ -641,7 +674,7 @@ bool Elf::load() noexcept {
 
 		int j = 0;
 		while (!hijacker->write(vaddr, data + phdr->p_offset, phdr->p_filesz)) {
-			printf("failed to write section data for phdr with paddr 0x%08llx\n", phdr->p_paddr);
+			printf("failed to write section data for phdr with paddr 0x%08llx to address 0x%08llx\n", phdr->p_paddr, vaddr);
 			if (j++ > 10) { // NOLINT(cppcoreguidelines-avoid-magic-numbers)
 				// TODO: find out why I did this
 				return false;
@@ -691,9 +724,11 @@ static void correctRsp(dbg::Registers &regs) noexcept {
 }
 
 bool Elf::start(uintptr_t args) noexcept {
-        printf("imagebase: 0x%08llx\n", imagebase);
+    const auto entry = toVirtualAddress(e_entry);
+	printf("imagebase: 0x%08llx\n", imagebase);
+	printf("entrypoint: 0x%08llx\n", entry);
 	if (hijacker->getPid() == getpid()) {
-		auto fun = reinterpret_cast<int(*)(uintptr_t)>(imagebase + e_entry); // NOLINT(*)
+		auto fun = reinterpret_cast<int(*)(uintptr_t)>(entry); // NOLINT(*)
 		bool res = fun(args) == 0;
 		for (const auto &mem : mappedMemory) {
 			munmap(mem.mem, mem.len);
@@ -705,7 +740,7 @@ bool Elf::start(uintptr_t args) noexcept {
 	dbg::Registers regs = tracer.getRegisters();
 	correctRsp(regs);
 	regs.rdi(args);
-	regs.rip(imagebase + e_entry);
+	regs.rip(entry);
 	tracer.setRegisters(regs);
 	// it will run on detatch
 	puts("great success");
@@ -742,7 +777,6 @@ bool Elf::processRelocations() noexcept {
 	if (relatbl == nullptr) [[unlikely]] {
 		return true;
 	}
-	uint8_t *const image = data + textOffset;
 	const size_t length = relaLength;
 	for (size_t i = 0; i < length; i++) {
 		const Elf64_Rela *__restrict rel = relatbl + i;
@@ -753,7 +787,7 @@ bool Elf::processRelocations() noexcept {
 				if (libsym == 0) [[unlikely]] {
 					return false;
 				}
-				*reinterpret_cast<uintptr_t*>(image + rel->r_offset) = libsym + rel->r_addend;
+				*faddr<uintptr_t*>(rel->r_offset) = libsym + toFileOffset(rel->r_addend);
 				break;
 			}
 			case R_X86_64_GLOB_DAT: {
@@ -765,12 +799,12 @@ bool Elf::processRelocations() noexcept {
 				if (libsym == static_cast<uintptr_t>(-1)) [[unlikely]] {
 					continue;
 				}
-				*reinterpret_cast<uintptr_t*>(image + rel->r_offset) = libsym;
+				*faddr<uintptr_t*>(rel->r_offset) = libsym;
 				break;
 			}
 			case R_X86_64_RELATIVE: {
 				// imagebase + addend
-				*reinterpret_cast<uintptr_t*>(image + rel->r_offset) = imagebase + rel->r_addend;
+				*faddr<uintptr_t*>(rel->r_offset) = imagebase + toFileOffset(rel->r_addend);
 				break;
 			}
 			case R_X86_64_JMP_SLOT: {
@@ -782,7 +816,7 @@ bool Elf::processRelocations() noexcept {
 					__builtin_printf("failed to find library symbol %s\n", name);
 					return false;
 				}
-				*reinterpret_cast<uintptr_t*>(image + rel->r_offset) = libsym;
+				*faddr<uintptr_t*>(rel->r_offset) = libsym;
 				break;
 			}
 			default:
@@ -800,7 +834,6 @@ bool Elf::processPltRelocations() noexcept {
 	if (plt == nullptr) [[unlikely]] {
 		return true;
 	}
-	uint8_t *const image = data + textOffset;
 	const size_t length = pltLength;
 	for (size_t i = 0; i < length; i++) {
 		const Elf64_Rela *__restrict rel = plt + i;
@@ -818,7 +851,7 @@ bool Elf::processPltRelocations() noexcept {
 			__builtin_printf("failed to find library symbol %s\n", name);
 			return false;
 		}
-		*reinterpret_cast<uintptr_t*>(image + rel->r_offset) = libsym;
+		*faddr<uintptr_t*>(rel->r_offset) = libsym;
 	}
 
 	return true;
